@@ -7,346 +7,298 @@
 // HORTA INTELIGENTE AUTOMATIZADA
 // ========================================
 
+// ---------- Pinos ----------
+const int PIN_SOLO   = A0;
+const int PIN_LDR    = A1;
+const int PIN_SERVO  = 9;
+const int PIN_BUZZER = 10;
 
-// ===== SENSORES =====
+const int LED_VERMELHO = 4;
+const int LED_AMARELO  = 3;
+const int LED_VERDE    = 2;
 
-const int pinoUmidade = A0;
-const int pinoLDR = A1;
+// ---------- Limites de umidade ----------
+const int SOLO_MAX   = 876;
+const int SOLO_SECO  = 300;
+const int SOLO_UMIDO = 600;
 
+// ---------- Limite de luminosidade ----------
+const int LUZ_EXCESSIVA = 820;
 
-// ===== PINOS DOS LEDS =====
+// ---------- Servo ----------
+const int COBERTURA_ABERTA  = 80;
+const int COBERTURA_FECHADA = 0;
 
-const int ledVermelho = 4;
-const int ledAmarelo = 3;
-const int ledVerde = 2;
+// ---------- Objetos ----------
+LiquidCrystal_I2C *lcd = nullptr;
+Servo servoCobertura;
 
+// ---------- Variáveis ----------
+bool coberturaFechada = false;
 
-// ===== PINOS DOS ATUADORES =====
-
-const int pinoRele = 7;
-const int pinoServo = 9;
-
-
-// ===== DISPLAY LCD =====
-
-// LCD 16 colunas e 2 linhas
-
-LiquidCrystal_I2C lcd_1(0x27, 16, 2);
-
-
-// ===== SERVOMOTOR =====
-
-Servo cobertura;
-
-
-// ===== LIMITES DOS SENSORES =====
-
-const int limiteSoloSeco = 600;
-const int limiteSoloUmido = 300;
-
-const int limiteSolForte = 700;
-const int limiteSolNormal = 600;
-
-
-// ===== POSICOES DA COBERTURA =====
-
-const int coberturaAberta = 0;
-const int coberturaFechada = 60;
-
-
-// ===== VARIAVEIS =====
-
-int leituraUmidade = 0;
-int leituraLuz = 0;
-
-bool estadoCobertura = false;
-bool bombaLigada = false;
+unsigned long ultimoBip = 0;
+bool buzzerLigado = false;
 
 
 // ========================================
-// CONFIGURACAO INICIAL
+// LOCALIZAÇÃO DO LCD
+// ========================================
+
+byte encontraLCD() {
+
+  for (byte addr = 1; addr < 127; addr++) {
+
+    Wire.beginTransmission(addr);
+
+    if (Wire.endTransmission() == 0) {
+      return addr;
+    }
+  }
+
+  return 0;
+}
+
+
+// ========================================
+// CONFIGURAÇÃO INICIAL
 // ========================================
 
 void setup() {
 
   Serial.begin(9600);
+  Wire.begin();
 
-  // LEDs
+  pinMode(LED_VERMELHO, OUTPUT);
+  pinMode(LED_AMARELO, OUTPUT);
+  pinMode(LED_VERDE, OUTPUT);
+  pinMode(PIN_BUZZER, OUTPUT);
 
-  pinMode(ledVermelho, OUTPUT);
-  pinMode(ledAmarelo, OUTPUT);
-  pinMode(ledVerde, OUTPUT);
+  // Inicialização do servo
+  servoCobertura.attach(PIN_SERVO, 500, 2400);
 
-  // Rele
+  servoCobertura.write(COBERTURA_ABERTA);
 
-  pinMode(pinoRele, OUTPUT);
+  coberturaFechada = false;
 
-  digitalWrite(pinoRele, LOW);
+  // Inicialização do LCD
+  byte endereco = encontraLCD();
 
-  // Servomotor
+  if (endereco == 0) {
 
-  cobertura.attach(pinoServo);
+    Serial.println("LCD nao encontrado!");
 
-  cobertura.write(coberturaAberta);
+  } else {
 
-  // DISPLAY LCD
+    lcd = new LiquidCrystal_I2C(endereco, 16, 2);
 
-  lcd_1.init();
+    lcd->init();
+    lcd->backlight();
+    lcd->clear();
 
-  lcd_1.backlight();
+    lcd->setCursor(0, 0);
+    lcd->print("Horta Inteligente");
 
-  lcd_1.setCursor(0, 0);
-  lcd_1.print("HORTA INTELIGENTE");
+    lcd->setCursor(0, 1);
+    lcd->print("Iniciando...");
 
-  lcd_1.setCursor(0, 1);
-  lcd_1.print("Iniciando...");
+    delay(1500);
 
-  delay(2000);
-
-  lcd_1.clear();
-
-  Serial.println("HORTA INTELIGENTE INICIADA!");
-
+    lcd->clear();
+  }
 }
 
 
 // ========================================
-// CONTROLE DA UMIDADE
-// ========================================
-
-void controlarUmidade() {
-
-  if (leituraUmidade > limiteSoloSeco) {
-
-    // SOLO SECO
-
-    digitalWrite(ledVermelho, HIGH);
-    digitalWrite(ledAmarelo, LOW);
-    digitalWrite(ledVerde, LOW);
-
-    // Liga a bomba
-
-    digitalWrite(pinoRele, HIGH);
-
-    bombaLigada = true;
-
-    Serial.println("SOLO SECO - BOMBA LIGADA");
-
-  }
-
-  else if (leituraUmidade >= limiteSoloUmido) {
-
-    // SOLO IDEAL
-
-    digitalWrite(ledVermelho, LOW);
-    digitalWrite(ledAmarelo, HIGH);
-    digitalWrite(ledVerde, LOW);
-
-    // Desliga a bomba
-
-    digitalWrite(pinoRele, LOW);
-
-    bombaLigada = false;
-
-    Serial.println("SOLO IDEAL - BOMBA DESLIGADA");
-
-  }
-
-  else {
-
-    // SOLO MUITO UMIDO
-
-    digitalWrite(ledVermelho, LOW);
-    digitalWrite(ledAmarelo, LOW);
-    digitalWrite(ledVerde, HIGH);
-
-    // Desliga a bomba
-
-    digitalWrite(pinoRele, LOW);
-
-    bombaLigada = false;
-
-    Serial.println("SOLO MUITO UMIDO - BOMBA DESLIGADA");
-
-  }
-
-}
-
-
-// ========================================
-// CONTROLE DA COBERTURA
-// ========================================
-
-void controlarCobertura() {
-
-  // SOL FORTE: FECHA A COBERTURA LENTAMENTE
-
-  if (leituraLuz > limiteSolForte &&
-      estadoCobertura == false) {
-
-    Serial.println("SOL FORTE - FECHANDO COBERTURA");
-
-    // Move o servo de 0 até 60 graus
-
-    for (int angulo = coberturaAberta;
-         angulo <= coberturaFechada;
-         angulo++) {
-
-      cobertura.write(angulo);
-
-      delay(30); // Controla a velocidade
-
-    }
-
-    estadoCobertura = true;
-
-    Serial.println("COBERTURA FECHADA");
-
-  }
-
-  // POUCA LUZ: ABRE A COBERTURA LENTAMENTE
-
-  else if (leituraLuz < limiteSolNormal &&
-           estadoCobertura == true) {
-
-    Serial.println("POUCA LUZ - ABRINDO COBERTURA");
-
-    // Move o servo de 60 até 0 graus
-
-    for (int angulo = coberturaFechada;
-         angulo >= coberturaAberta;
-         angulo--) {
-
-      cobertura.write(angulo);
-
-      delay(30);
-
-    }
-
-    estadoCobertura = false;
-
-    Serial.println("COBERTURA ABERTA");
-
-  }
-
-}
-
-
-// ========================================
-// ATUALIZACAO DO DISPLAY LCD
-// ========================================
-
-void atualizarDisplay() {
-
-  // PRIMEIRA LINHA: SENSORES
-
-  lcd_1.setCursor(0, 0);
-
-  lcd_1.print("U:");
-  lcd_1.print(leituraUmidade);
-
-  lcd_1.print(" L:");
-  lcd_1.print(leituraLuz);
-
-  lcd_1.print("   ");
-
-
-  // SEGUNDA LINHA: STATUS DO SISTEMA
-
-  lcd_1.setCursor(0, 1);
-
-  if (leituraUmidade > limiteSoloSeco) {
-
-    lcd_1.print("Solo:SECO B:ON ");
-
-  }
-
-  else if (leituraUmidade >= limiteSoloUmido) {
-
-    lcd_1.print("Solo:IDEAL B:OFF");
-
-  }
-
-  else {
-
-    lcd_1.print("Solo:UMIDO B:OFF");
-
-  }
-
-}
-
-
-// ========================================
-// MONITOR SERIAL
-// ========================================
-
-void monitorarSistema() {
-
-  Serial.println("-------------------------");
-
-  Serial.print("Umidade: ");
-  Serial.println(leituraUmidade);
-
-  Serial.print("Luminosidade: ");
-  Serial.println(leituraLuz);
-
-  Serial.print("Bomba: ");
-
-  if (bombaLigada) {
-    Serial.println("LIGADA");
-  }
-
-  else {
-    Serial.println("DESLIGADA");
-  }
-
-  Serial.print("Cobertura: ");
-
-  if (estadoCobertura) {
-    Serial.println("FECHADA");
-  }
-
-  else {
-    Serial.println("ABERTA");
-  }
-
-}
-
-
-// ========================================
-// LOOP PRINCIPAL
+// PROGRAMA PRINCIPAL
 // ========================================
 
 void loop() {
 
-  // LEITURA DOS SENSORES
+  // Leitura dos sensores
+  int soloBruto = analogRead(PIN_SOLO);
+  int luzBruta = analogRead(PIN_LDR);
 
-  leituraUmidade = analogRead(pinoUmidade);
+  // Conversão para porcentagem
+  int soloPct = constrain(
+    map(soloBruto, 0, SOLO_MAX, 0, 100),
+    0, 100
+  );
 
-  leituraLuz = analogRead(pinoLDR);
+  int luzPct = map(luzBruta, 0, 1023, 0, 100);
 
+  // Atualização dos componentes
+  atualizaSolo(soloBruto);
 
-  // CONTROLE DA IRRIGACAO
+  atualizaCobertura(luzBruta);
 
-  controlarUmidade();
+  atualizaDisplay(soloBruto, soloPct, luzPct);
 
+  // Monitor Serial
+  Serial.print("Solo: ");
+  Serial.print(soloBruto);
 
-  // CONTROLE DA COBERTURA
+  Serial.print(" (");
+  Serial.print(soloPct);
+  Serial.print("%)");
 
-  controlarCobertura();
+  Serial.print(" | Luz: ");
+  Serial.print(luzBruta);
 
+  Serial.print(" (");
+  Serial.print(luzPct);
+  Serial.print("%)");
 
-  // ATUALIZACAO DO DISPLAY
+  Serial.print(" | Cobertura: ");
 
-  atualizarDisplay();
+  Serial.println(
+    coberturaFechada ? "Fechada" : "Aberta"
+  );
 
-
-  // MONITORAMENTO SERIAL
-
-  monitorarSistema();
-
-
-  delay(500);
-
+  delay(200);
 }
--
+
+
+// ========================================
+// CONTROLE DA UMIDADE DO SOLO
+// ========================================
+
+void atualizaSolo(int solo) {
+
+  digitalWrite(LED_VERMELHO, LOW);
+  digitalWrite(LED_AMARELO, LOW);
+  digitalWrite(LED_VERDE, LOW);
+
+  if (solo < SOLO_SECO) {
+
+    // Solo seco
+    digitalWrite(LED_VERMELHO, HIGH);
+
+    bipaSoloSeco();
+
+  }
+
+  else if (solo <= SOLO_UMIDO) {
+
+    // Solo em condição intermediária
+    digitalWrite(LED_AMARELO, HIGH);
+
+    noTone(PIN_BUZZER);
+    buzzerLigado = false;
+
+  }
+
+  else {
+
+    // Solo úmido
+    digitalWrite(LED_VERDE, HIGH);
+
+    noTone(PIN_BUZZER);
+    buzzerLigado = false;
+
+  }
+}
+
+
+// ========================================
+// BUZZER - AVISO DE SOLO SECO
+// ========================================
+
+void bipaSoloSeco() {
+
+  unsigned long agora = millis();
+
+  if (agora - ultimoBip >= 500) {
+
+    ultimoBip = agora;
+
+    buzzerLigado = !buzzerLigado;
+
+    if (buzzerLigado) {
+
+      tone(PIN_BUZZER, 1000);
+
+    } else {
+
+      noTone(PIN_BUZZER);
+
+    }
+  }
+}
+
+
+// ========================================
+// CONTROLE DA COBERTURA PELO LDR
+// ========================================
+
+void atualizaCobertura(int luz) {
+
+  // Se houver muita luminosidade,
+  // fecha a cobertura apenas uma vez.
+
+  if (luz > LUZ_EXCESSIVA && !coberturaFechada) {
+
+    servoCobertura.write(COBERTURA_FECHADA);
+
+    coberturaFechada = true;
+
+    Serial.println("Sol forte! Fechando cobertura.");
+  }
+
+  // Se a luminosidade diminuir,
+  // mantém a cobertura na posição atual.
+}
+
+
+// ========================================
+// DISPLAY LCD 16x2
+// ========================================
+
+void atualizaDisplay(int soloBruto, int soloPct, int luzPct) {
+
+  if (lcd == nullptr) return;
+
+  const char *status;
+
+  if (soloBruto < SOLO_SECO) {
+
+    status = "SECO";
+
+  }
+
+  else if (soloBruto <= SOLO_UMIDO) {
+
+    status = "IDEAL";
+
+  }
+
+  else {
+
+    status = "UMIDO";
+
+  }
+
+  char linha1[17];
+  char linha2[17];
+
+  snprintf(
+    linha1,
+    sizeof(linha1),
+    "Solo:%3d%% %-6s",
+    soloPct,
+    status
+  );
+
+  snprintf(
+    linha2,
+    sizeof(linha2),
+    "Luz:%3d%% Cob:%s",
+    luzPct,
+    coberturaFechada ? "FEC" : "ABR"
+  );
+
+  lcd->setCursor(0, 0);
+  lcd->print(linha1);
+
+  lcd->setCursor(0, 1);
+  lcd->print(linha2);
+}
